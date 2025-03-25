@@ -110,7 +110,7 @@ class SimpleDocxToExcelApp:
             return
         
         try:
-            self.update_status("Обработка файла...\nШаг 1: Извлечение таблиц из DOCX...\n\nПравила обработки:\n- Все таблицы из Word перенесутся в Excel\n- Первая строка удаляется, если во второй ячейке НЕТ даты\n- Первая строка сохраняется, если во второй ячейке ЕСТЬ дата\n- Столбцы A и C будут удалены\n- Даты во втором столбце будут приведены к формату ДД.ММ.ГГГГ\n- Даты рождения в пятом столбце будут приведены к формату ДД.ММ.ГГГГ\n- Даты окончания в восьмом столбце будут приведены к формату ДД.ММ.ГГГГ\n- Информация о судах из столбцов D и E (бывшие F и G) будет перемещена в столбец I (бывший K)")
+            self.update_status("Обработка файла...\nШаг 1: Извлечение таблиц из DOCX...\n\nПравила обработки:\n- Все таблицы из Word перенесутся в Excel\n- Первая строка удаляется, если во второй ячейке НЕТ даты\n- Первая строка сохраняется, если во второй ячейке ЕСТЬ дата\n- Столбцы A и C будут удалены\n- Даты во втором столбце будут приведены к формату ДД.ММ.ГГГГ\n- Даты рождения в пятом столбце будут приведены к формату ДД.ММ.ГГГГ\n- Даты окончания в восьмом столбце будут приведены к формату ДД.ММ.ГГГГ\n- Информация о судах из столбцов D и E (бывшие F и G) будет перемещена в столбец I (бывший K)\n- Все даты в столбце I будут отформатированы в виде ДД.ММ.ГГГГ")
             
             # Шаг 1: Извлечение таблиц из DOCX в Excel
             table_count = self.convert_docx_to_excel(self.docx_path, self.excel_path)
@@ -119,7 +119,7 @@ class SimpleDocxToExcelApp:
                 self.update_status(f"Шаг 1: Таблицы успешно извлечены ({table_count} шт.)\n\nШаг 2: Удаление первых строк и столбцов A и C, нормализация дат...")
                 
                 # Шаг 2: Удаление столбцов A и C, проверка и удаление первой строки, нормализация дат
-                sheets_processed, rows_deleted, dates_normalized, text_moved, court_info_moved = self.remove_columns(self.excel_path)
+                sheets_processed, rows_deleted, dates_normalized, text_moved, court_info_moved, court_dates_normalized = self.remove_columns(self.excel_path)
                 
                 # Финальное сообщение
                 self.update_status(
@@ -128,6 +128,7 @@ class SimpleDocxToExcelApp:
                     f"- Обработано листов: {sheets_processed}\n"
                     f"- Удалено первых строк: {rows_deleted}\n"
                     f"- Нормализовано дат: {dates_normalized}\n"
+                    f"- Нормализовано дат в информации о судах: {court_dates_normalized}\n"
                     f"- Перемещено текстовых блоков: {text_moved}\n"
                     f"- Перемещено записей о судах: {court_info_moved}\n"
                     f"- Удалены столбцы: A и C\n\n"
@@ -204,6 +205,7 @@ class SimpleDocxToExcelApp:
         end_dates_normalized = 0
         text_moved = 0
         court_info_moved = 0
+        court_dates_normalized = 0
         
         # Обрабатываем каждый лист
         for sheet_name in workbook.sheetnames:
@@ -239,9 +241,13 @@ class SimpleDocxToExcelApp:
             end_dates_normalized += end_dates_count
             text_moved += moved_text_count
             
-            # НОВОЕ ПРАВИЛО: Обрабатываем столбцы 4 и 5 (бывшие F и G, новые D и E) и ищем информацию о судах
+            # Обрабатываем столбцы 4 и 5 (бывшие F и G, новые D и E) и ищем информацию о судах
             court_moved = self._move_court_info(sheet, source_columns=(4, 5), target_column=9)
             court_info_moved += court_moved
+            
+            # НОВОЕ: Нормализуем даты в столбце с информацией о судах
+            court_normalized = self._normalize_dates_in_court_info(sheet, 9)
+            court_dates_normalized += court_normalized
             
             # Автоподбор ширины столбцов
             self._adjust_column_width(sheet)
@@ -249,7 +255,45 @@ class SimpleDocxToExcelApp:
         # Сохраняем изменения
         workbook.save(excel_path)
         
-        return sheets_processed, rows_deleted, dates_normalized + birth_dates_normalized + end_dates_normalized, text_moved, court_info_moved
+        return sheets_processed, rows_deleted, dates_normalized + birth_dates_normalized + end_dates_normalized, text_moved, court_info_moved, court_dates_normalized
+    
+    def _normalize_dates_in_court_info(self, sheet, column_index=9):
+        """
+        Нормализует все даты в столбце с информацией о судах к формату ДД.ММ.ГГГГ
+        
+        Возвращает количество нормализованных дат
+        """
+        normalized_count = 0
+        
+        # Обрабатываем все ячейки в указанном столбце
+        for row in range(1, sheet.max_row + 1):
+            cell = sheet.cell(row=row, column=column_index)
+            value = cell.value
+            
+            # Пропускаем пустые ячейки
+            if not value:
+                continue
+                
+            value_str = str(value).strip()
+            
+            # Извлекаем все даты из текста
+            dates = self._extract_all_dates_from_text(value_str)
+            
+            # Если даты найдены
+            if dates:
+                # Для каждой найденной даты
+                for date in dates:
+                    # Нормализуем дату
+                    normalized_date = self._parse_and_normalize_date(date)
+                    if normalized_date:
+                        # Заменяем исходную дату на нормализованную
+                        value_str = value_str.replace(date, normalized_date)
+                        normalized_count += 1
+                
+                # Обновляем значение ячейки
+                cell.value = value_str
+        
+        return normalized_count
     
     def _move_court_info(self, sheet, source_columns=(4, 5), target_column=9):
         """
