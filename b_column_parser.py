@@ -117,6 +117,19 @@ class ImprovedAddressProcessor:
         
         # Паттерны для поиска информации о доме - от самого специфического к самому общему
         self.house_patterns = [
+            # НОВЫЕ ДОБАВЛЯЕМЫЕ ПАТТЕРНЫ
+            # 1. "54-а-121" => "54А-121" (дом-литера-квартира через дефисы с маленькой буквой)
+            r'\s*(\d+)-([а-я])-(\d+)',
+            
+            # 2. "д. 8/3/А кв. 189" => "8-3А-189" (дом/корпус/литера квартира)
+            r'\s*д\.?\s*(\d+)\/(\d+)\/([А-Яа-я])\s+кв\.?\s*(\d+)',
+            
+            # 3. "110- А-422" => "110А-422" (дом-пробел-литера-квартира с пробелами)
+            r'\s*(\d+)-\s*([А-Яа-я])-(\d+)',
+            
+            # 4. "16 лит. А кв. 43" => "16А-43" (дом литера квартира)
+            r'\s*(\d+)\s+лит\.?\s+([А-Яа-я])\s+кв\.?\s*(\d+)',
+            
             # 1. Самые специфичные форматы с наибольшим количеством компонентов
             # "д. 14, корп. 1, лит. А, кв. 93" - дом, корпус, литера, квартира с запятыми
             r'\s*д\.?\s*(\d+),\s*корп\.?\s*(\d+),\s*лит\.?\s*([А-Яа-я]),\s*кв\.?\s*(\d+)',
@@ -341,23 +354,33 @@ class ImprovedAddressProcessor:
                 
                 # Форматируем информацию о доме в зависимости от шаблона
                 if len(house_digits) == 4:
+                    # НОВОЕ ПРАВИЛО для "д. 8/3/А кв. 189" => "8-3А-189"
+                    if re.match(r'[А-Яа-я]', house_digits[2]) and pattern.find(r'\/(\d+)\/([А-Яа-я])') != -1:
+                        house_info = f"{house_digits[0]}-{house_digits[1]}{house_digits[2].upper()}-{house_digits[3]}"
                     # Проверяем, является ли третья группа литерой
-                    if re.match(r'[А-Яа-я]', house_digits[2]):
+                    elif re.match(r'[А-Яа-я]', house_digits[2]):
                         # Форматы с домом, корпусом, литерой, квартирой
                         # "д. 14, корп. 1, лит. А, кв. 93" -> "14-1А-93"
                         # "27-2-А-17" -> "27-2А-17"
-                        house_info = f"{house_digits[0]}-{house_digits[1]}{house_digits[2]}-{house_digits[3]}"
+                        house_info = f"{house_digits[0]}-{house_digits[1]}{house_digits[2].upper()}-{house_digits[3]}"
                     else:
                         # Общий случай для четырех компонентов
                         house_info = f"{house_digits[0]}-{house_digits[1]}-{house_digits[2]}-{house_digits[3]}"
                 elif len(house_digits) == 3:
+                    # НОВОЕ ПРАВИЛО для "54-а-121" => "54А-121"
+                    if re.match(r'[а-я]', house_digits[1]) and pattern.find(r'-([а-я])-') != -1:
+                        house_info = f"{house_digits[0]}{house_digits[1].upper()}-{house_digits[2]}"
+                    # НОВОЕ ПРАВИЛО для "110- А-422" => "110А-422" и для "16 лит. А кв. 43" => "16А-43"
+                    elif re.match(r'[А-Яа-я]', house_digits[1]) and (pattern.find(r'-\s*([А-Яа-я])-') != -1 or 
+                                                                    pattern.find(r'лит\.?\s+([А-Яа-я])') != -1):
+                        house_info = f"{house_digits[0]}{house_digits[1].upper()}-{house_digits[2]}"
                     # Проверяем, является ли вторая группа литерой
-                    if re.match(r'[А-Яа-я]', house_digits[1]):
+                    elif re.match(r'[А-Яа-я]', house_digits[1]):
                         # Форматы с домом, литерой, квартирой
                         # "д. 6А кв. 31" -> "6А-31"
                         # "д. 30/А кв. 85" -> "30А-85"
                         # "д. 24-А кв. 50" -> "24А-50"
-                        house_info = f"{house_digits[0]}{house_digits[1]}-{house_digits[2]}"
+                        house_info = f"{house_digits[0]}{house_digits[1].upper()}-{house_digits[2]}"
                     else:
                         # Общий случай для трех компонентов: дом-корпус-квартира
                         house_info = f"{house_digits[0]}-{house_digits[1]}-{house_digits[2]}"
@@ -427,7 +450,7 @@ class ImprovedAddressProcessor:
 
 def process_column_b(excel_file_path):
     """
-    Обрабатывает столбец B уже обработанного файла column_b_formatter.py
+    Обрабатывает столбец B во всех листах Excel файла
     и распределяет данные по столбцам O, P, Q
     
     Args:
@@ -438,76 +461,104 @@ def process_column_b(excel_file_path):
     
     # Открываем файл Excel
     workbook = openpyxl.load_workbook(excel_file_path)
-    sheet = workbook.active
     
-    # Считаем статистику
-    stats = {
+    # Считаем общую статистику
+    total_stats = {
         'processed_rows': 0,
         'addresses_found': 0,
         'phones_found': 0,
         'other_info_found': 0
     }
     
-    # Обрабатываем каждую строку
-    for row in range(1, sheet.max_row + 1):
-        cell_b = sheet.cell(row=row, column=2)  # Столбец B
+    # Словарь для хранения статистики по каждому листу
+    sheet_stats = {}
+    
+    # Обрабатываем каждый лист в Excel файле
+    for sheet in workbook.worksheets:
+        # Инициализируем статистику для текущего листа
+        sheet_stats[sheet.title] = {
+            'processed_rows': 0,
+            'addresses_found': 0,
+            'phones_found': 0,
+            'other_info_found': 0
+        }
         
-        # Если ячейка не пустая, обрабатываем ее
-        if cell_b.value and str(cell_b.value).strip():
-            raw_text = str(cell_b.value).strip()
-            stats['processed_rows'] += 1
+        # Обрабатываем каждую строку текущего листа
+        for row in range(1, sheet.max_row + 1):
+            cell_b = sheet.cell(row=row, column=2)  # Столбец B
             
-            # 1. Сначала извлекаем телефон
-            phone, original_phone_texts = processor.extract_phone(raw_text)
-            
-            # 2. Удаляем телефон из исходного текста
-            text_without_phone = raw_text
-            if original_phone_texts:
-                for phone_text in original_phone_texts:
-                    text_without_phone = text_without_phone.replace(phone_text, '')
-                stats['phones_found'] += 1
-            
-            # 3. Извлекаем адрес из текста без телефона
-            formatted_address, original_address = processor.extract_address(text_without_phone)
-            
-            # 4. Определяем иное - всё, что осталось после удаления телефона и адреса
-            other_info = text_without_phone
-            if original_address:
-                other_info = other_info.replace(original_address, '')
-                stats['addresses_found'] += 1
-            
-            # Очищаем результат
-            other_info = processor.clean_other_info(other_info)
-            if other_info:
-                stats['other_info_found'] += 1
-            
-            # Получаем ячейки в столбцах O, P, Q
-            cell_o = sheet.cell(row=row, column=15)  # Столбец O для адреса
-            cell_p = sheet.cell(row=row, column=16)  # Столбец P для телефона
-            cell_q = sheet.cell(row=row, column=17)  # Столбец Q для иного
-            
-            # Заполняем ячейки
-            if formatted_address:
-                cell_o.value = formatted_address
-            
-            if phone:
-                cell_p.value = phone
-            
-            if other_info:
-                cell_q.value = other_info
-            
-            # Очищаем столбец B, если извлекли что-то полезное
-            if formatted_address or phone or other_info:
-                cell_b.value = None
+            # Если ячейка не пустая, обрабатываем ее
+            if cell_b.value and str(cell_b.value).strip():
+                raw_text = str(cell_b.value).strip()
+                total_stats['processed_rows'] += 1
+                sheet_stats[sheet.title]['processed_rows'] += 1
+                
+                # 1. Сначала извлекаем телефон
+                phone, original_phone_texts = processor.extract_phone(raw_text)
+                
+                # 2. Удаляем телефон из исходного текста
+                text_without_phone = raw_text
+                if original_phone_texts:
+                    for phone_text in original_phone_texts:
+                        text_without_phone = text_without_phone.replace(phone_text, '')
+                    total_stats['phones_found'] += 1
+                    sheet_stats[sheet.title]['phones_found'] += 1
+                
+                # 3. Извлекаем адрес из текста без телефона
+                formatted_address, original_address = processor.extract_address(text_without_phone)
+                
+                # 4. Определяем иное - всё, что осталось после удаления телефона и адреса
+                other_info = text_without_phone
+                if original_address:
+                    other_info = other_info.replace(original_address, '')
+                    total_stats['addresses_found'] += 1
+                    sheet_stats[sheet.title]['addresses_found'] += 1
+                
+                # Очищаем результат
+                other_info = processor.clean_other_info(other_info)
+                if other_info:
+                    total_stats['other_info_found'] += 1
+                    sheet_stats[sheet.title]['other_info_found'] += 1
+                
+                # Получаем ячейки в столбцах O, P, Q
+                cell_o = sheet.cell(row=row, column=15)  # Столбец O для адреса
+                cell_p = sheet.cell(row=row, column=16)  # Столбец P для телефона
+                cell_q = sheet.cell(row=row, column=17)  # Столбец Q для иного
+                
+                # Заполняем ячейки
+                if formatted_address:
+                    cell_o.value = formatted_address
+                
+                if phone:
+                    cell_p.value = phone
+                
+                if other_info:
+                    cell_q.value = other_info
+                
+                # Очищаем столбец B, если извлекли что-то полезное
+                if formatted_address or phone or other_info:
+                    cell_b.value = None
     
     # Сохраняем результат
     output_path = excel_file_path
     workbook.save(output_path)
     
-    print(f"Обработка завершена. Обработано строк: {stats['processed_rows']}")
-    print(f"  Найдено адресов: {stats['addresses_found']}")
-    print(f"  Найдено телефонов: {stats['phones_found']}")
-    print(f"  Найдено дополнительной информации: {stats['other_info_found']}")
+    # Выводим статистику по каждому листу
+    print(f"Обработка завершена.")
+    print("\nСтатистика по листам:")
+    for sheet_name, stats in sheet_stats.items():
+        print(f"\nЛист '{sheet_name}':")
+        print(f"  Обработано строк: {stats['processed_rows']}")
+        print(f"  Найдено адресов: {stats['addresses_found']}")
+        print(f"  Найдено телефонов: {stats['phones_found']}")
+        print(f"  Найдено дополнительной информации: {stats['other_info_found']}")
+    
+    # Выводим общую статистику
+    print("\nОбщая статистика:")
+    print(f"  Всего обработано строк: {total_stats['processed_rows']}")
+    print(f"  Всего найдено адресов: {total_stats['addresses_found']}")
+    print(f"  Всего найдено телефонов: {total_stats['phones_found']}")
+    print(f"  Всего найдено дополнительной информации: {total_stats['other_info_found']}")
     
     return output_path
 
@@ -520,4 +571,4 @@ if __name__ == "__main__":
         print(f"Файл успешно обработан и сохранен: {output_path}")
     else:
         print("Пожалуйста, укажите путь к файлу как аргумент командной строки.")
-        print("Пример: python b_column_parser.py путь_к_файлу.xlsx") 
+        print("Пример: python b_column_parser.py путь_к_файлу.xlsx")

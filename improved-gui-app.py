@@ -192,65 +192,135 @@ class DocxToExcelApp:
                 # Шаг 3: Дополнительная обработка столбца B - извлечение адресов, телефонов и другой информации
                 self.update_status(f"Шаг 3: Обработка столбца B - извлечение адресов, телефонов и другой информации...")
                 
+                # Вместо использования process_column_b, реализуем схожую логику здесь для всех листов
                 # Загружаем файл для обработки столбца B
                 workbook = openpyxl.load_workbook(self.excel_path)
-                sheet = workbook.active
                 
-                # Статистика для столбца B
+                # Статистика для столбца B по всем листам
                 b_stats = {
                     'processed_rows': 0,
                     'addresses_found': 0,
                     'phones_found': 0,
-                    'other_info_found': 0
+                    'other_info_found': 0,
+                    'sheets_processed': 0
                 }
                 
-                # Обрабатываем каждую строку в столбце B
-                for row in range(1, sheet.max_row + 1):
-                    cell_b = sheet.cell(row=row, column=2)  # Столбец B
+                # Обрабатываем каждый лист в Excel-файле
+                for sheet_name in workbook.sheetnames:
+                    sheet = workbook[sheet_name]
+                    b_stats['sheets_processed'] += 1
                     
-                    # Если ячейка не пустая, обрабатываем ее
-                    if cell_b.value and str(cell_b.value).strip():
-                        raw_text = str(cell_b.value).strip()
-                        b_stats['processed_rows'] += 1
+                    self.update_status(f"Обработка листа: {sheet_name}...")
+                    
+                    # Обрабатываем каждую строку в столбце B текущего листа
+                    for row in range(1, sheet.max_row + 1):
+                        cell_b = sheet.cell(row=row, column=2)  # Столбец B
                         
-                        # 1. Сначала извлекаем телефон
-                        phone, original_phone_texts = self.address_processor.extract_phone(raw_text)
+                        # Если ячейка не пустая, обрабатываем ее
+                        if cell_b.value and str(cell_b.value).strip():
+                            raw_text = str(cell_b.value).strip()
+                            b_stats['processed_rows'] += 1
+                            
+                            # 1. Сначала извлекаем телефон
+                            phone, original_phone_texts = self.address_processor.extract_phone(raw_text)
+                            
+                            # 2. Удаляем телефон из исходного текста
+                            text_without_phone = raw_text
+                            if original_phone_texts:
+                                for phone_text in original_phone_texts:
+                                    text_without_phone = text_without_phone.replace(phone_text, '')
+                                b_stats['phones_found'] += 1
+                            
+                            # 3. Извлекаем адрес из текста без телефона
+                            formatted_address, original_address = self.address_processor.extract_address(text_without_phone)
+                            
+                            # 4. Определяем иное - всё, что осталось после удаления телефона и адреса
+                            other_info = text_without_phone
+                            if original_address:
+                                other_info = other_info.replace(original_address, '')
+                                b_stats['addresses_found'] += 1
+                            
+                            # Очищаем результат
+                            other_info = self.address_processor.clean_other_info(other_info)
+                            if other_info:
+                                b_stats['other_info_found'] += 1
+                            
+                            # Получаем ячейки в столбцах O, P, Q
+                            cell_o = sheet.cell(row=row, column=15)  # Столбец O для адреса
+                            cell_p = sheet.cell(row=row, column=16)  # Столбец P для телефона
+                            cell_q = sheet.cell(row=row, column=17)  # Столбец Q для иного
+                            
+                            # Заполняем ячейки
+                            if formatted_address:
+                                cell_o.value = formatted_address
+                            
+                            if phone:
+                                cell_p.value = phone
+                            
+                            if other_info:
+                                cell_q.value = other_info
+                            
+                            # Очищаем столбец B, если извлекли что-то полезное
+                            if formatted_address or phone or other_info:
+                                cell_b.value = None
+                                
+                        # Также проверяем столбец D, если там есть данные
+                        cell_d = sheet.cell(row=row, column=4)  # Столбец D
                         
-                        # 2. Удаляем телефон из исходного текста
-                        text_without_phone = raw_text
-                        if original_phone_texts:
-                            for phone_text in original_phone_texts:
-                                text_without_phone = text_without_phone.replace(phone_text, '')
-                            b_stats['phones_found'] += 1
-                        
-                        # 3. Извлекаем адрес из текста без телефона
-                        formatted_address, original_address = self.address_processor.extract_address(text_without_phone)
-                        
-                        # 4. Определяем иное - всё, что осталось после удаления телефона и адреса
-                        other_info = text_without_phone
-                        if original_address:
-                            other_info = other_info.replace(original_address, '')
-                            b_stats['addresses_found'] += 1
-                        
-                        # Очищаем результат
-                        other_info = self.address_processor.clean_other_info(other_info)
-                        if other_info:
-                            b_stats['other_info_found'] += 1
-                        
-                        # Получаем ячейки в столбцах O, P, Q
-                        cell_o = sheet.cell(row=row, column=15)  # Столбец O для адреса
-                        cell_p = sheet.cell(row=row, column=16)  # Столбец P для телефона
-                        cell_q = sheet.cell(row=row, column=17)  # Столбец Q для иного
-                        
-                        # Заполняем ячейки
-                        if formatted_address:
-                            cell_o.value = formatted_address
-                        
-                        if phone:
-                            cell_p.value = phone
-                        
-                        if other_info:
-                            cell_q.value = other_info
+                        # Если ячейка не пустая, обрабатываем ее
+                        if cell_d.value and str(cell_d.value).strip():
+                            raw_text = str(cell_d.value).strip()
+                            b_stats['processed_rows'] += 1
+                            
+                            # 1. Сначала извлекаем телефон
+                            phone, original_phone_texts = self.address_processor.extract_phone(raw_text)
+                            
+                            # 2. Удаляем телефон из исходного текста
+                            text_without_phone = raw_text
+                            if original_phone_texts:
+                                for phone_text in original_phone_texts:
+                                    text_without_phone = text_without_phone.replace(phone_text, '')
+                                b_stats['phones_found'] += 1
+                            
+                            # 3. Извлекаем адрес из текста без телефона
+                            formatted_address, original_address = self.address_processor.extract_address(text_without_phone)
+                            
+                            # 4. Определяем иное - всё, что осталось после удаления телефона и адреса
+                            other_info = text_without_phone
+                            if original_address:
+                                other_info = other_info.replace(original_address, '')
+                                b_stats['addresses_found'] += 1
+                            
+                            # Очищаем результат
+                            other_info = self.address_processor.clean_other_info(other_info)
+                            if other_info:
+                                b_stats['other_info_found'] += 1
+                            
+                            # Получаем ячейки в столбцах O, P, Q
+                            cell_o = sheet.cell(row=row, column=15)  # Столбец O для адреса
+                            cell_p = sheet.cell(row=row, column=16)  # Столбец P для телефона
+                            cell_q = sheet.cell(row=row, column=17)  # Столбец Q для иного
+                            
+                            # Заполняем ячейки
+                            if formatted_address:
+                                cell_o.value = formatted_address
+                            
+                            if phone:
+                                cell_p.value = phone
+                            
+                            if other_info:
+                                cell_q.value = other_info
+                            
+                            # Очищаем столбец D, если извлекли что-то полезное
+                            if formatted_address or phone or other_info:
+                                cell_d.value = None
+                    
+                    # Обновляем статус после обработки каждого листа
+                    self.update_status(f"Лист '{sheet_name}' обработан. Всего строк: {b_stats['processed_rows']}")
+                
+                # Удаляем литеры А, Б, В, Г из адресов
+                self.update_status("Удаление литер А, Б, В, Г из адресов...")
+                removed_count = self.remove_letters_from_addresses(workbook)
                 
                 # Сохраняем изменения
                 workbook.save(self.excel_path)
@@ -259,7 +329,7 @@ class DocxToExcelApp:
                 self.update_status(
                     f"Обработка успешно завершена!\n\n"
                     f"- Извлечено таблиц: {table_count}\n"
-                    f"- Обработано листов: {stats['sheets_processed']}\n"
+                    f"- Обработано листов: {stats['sheets_processed']} + {b_stats['sheets_processed']}\n"
                     f"- Удалено первых строк: {stats['rows_deleted']}\n"
                     f"- Нормализовано дат в столбце A: {stats['dates_normalized']}\n"
                     f"- Нормализовано дат рождения в столбце C: {stats['birth_dates_normalized']}\n"
@@ -270,11 +340,13 @@ class DocxToExcelApp:
                     f"- Отформатировано ячеек с информацией о судах: {stats['formatted_cells']}\n"
                     f"- Всего нормализовано дат: {stats['total_dates_normalized']}\n"
                     f"- Удалены столбцы: A и C\n\n"
-                    f"Обработка столбца B:\n"
+                    f"Обработка столбцов B и D:\n"
+                    f"- Обработано листов: {b_stats['sheets_processed']}\n"
                     f"- Обработано строк: {b_stats['processed_rows']}\n"
                     f"- Найдено адресов: {b_stats['addresses_found']}\n"
                     f"- Найдено телефонов: {b_stats['phones_found']}\n"
-                    f"- Найдено дополнительной информации: {b_stats['other_info_found']}\n\n"
+                    f"- Найдено дополнительной информации: {b_stats['other_info_found']}\n"
+                    f"- Удалено литер из адресов: {removed_count}\n\n"
                     f"Результат сохранен в: {self.excel_path}\n\n"
                     f"Адреса перемещены в столбец O\n"
                     f"Телефоны перемещены в столбец P\n"
@@ -292,6 +364,58 @@ class DocxToExcelApp:
         except Exception as e:
             self.update_status(f"Произошла ошибка при обработке файла:\n{str(e)}")
             messagebox.showerror("Ошибка", f"Произошла ошибка: {str(e)}")
+    
+    def remove_letters_from_addresses(self, workbook):
+        """
+        Удаляет буквы А, Б, В, Г из адресов в столбце O во всех листах
+        
+        Args:
+            workbook: открытый workbook openpyxl
+            
+        Returns:
+            int: количество измененных адресов
+        """
+        import re
+        
+        # Счетчик измененных адресов
+        total_changes = 0
+        
+        # Обрабатываем каждый лист
+        for sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            
+            # Обрабатываем каждую строку
+            for row in range(1, sheet.max_row + 1):
+                cell_o = sheet.cell(row=row, column=15)  # Столбец O для адреса
+                
+                # Если ячейка не пустая, обрабатываем её
+                if cell_o.value and str(cell_o.value).strip():
+                    address = str(cell_o.value)
+                    original_address = address  # Сохраняем исходный адрес для сравнения
+                    
+                    # Обрабатываем каждую литеру
+                    for letter in ['А', 'Б', 'В', 'Г']:
+                        # Заменяем числоЛитера-число на число-число
+                        new_address = re.sub(fr'(\d+){letter}-(\d+)', r'\1-\2', address)
+                        if new_address != address:
+                            address = new_address
+                            
+                        # Заменяем числоЛитера в конце строки или перед пробелом
+                        new_address = re.sub(fr'(\d+){letter}(?=\s|$)', r'\1', address)
+                        if new_address != address:
+                            address = new_address
+                            
+                        # Заменяем число-корпусЛитера-число на число-корпус-число
+                        new_address = re.sub(fr'(\d+)-(\d+){letter}-(\d+)', r'\1-\2-\3', address)
+                        if new_address != address:
+                            address = new_address
+                    
+                    # Если адрес изменился, обновляем ячейку
+                    if address != original_address:
+                        cell_o.value = address
+                        total_changes += 1
+        
+        return total_changes
     
     def open_file(self, file_path):
         """Открытие файла в соответствующем приложении"""
